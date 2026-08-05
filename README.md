@@ -145,19 +145,65 @@ Every important choice is justified in the sections below (modular NestJS + work
 
 ## 1. Features
 
-- **Multi-region continuous ingest** — idempotent `POST /incidents`, priority queues, load shedding under overload
-- **Resource coordination** — `AMBULANCE`, `HOSPITAL`, `RESCUE_TEAM`, `HELICOPTER`, `EOC` with capacity + status
-- **Min response-time optimization** — spatial grid prune → Google Maps / Dijkstra shortest-time → min-cost assign
-- **Hungarian batch reopt** — globally minimize Σ ETA when roads fail, vehicles fail, hospitals fill
-- **Hot path vs cold path** — algorithmic dispatch in milliseconds; RAG agents explain after assign
-- **RAG Agentic AI** — Triage → Planner → Validator → Explainer with **strong citation-first system prompts** + SOP citations (Claude / OpenAI)
-- **Hybrid RAG** — query rewrite + embedding/keyword fusion; `POST /rag/query` returns grounded answers with `[chunk:ID]`
-- **Environment events** — road blocks, hospital full, vehicle failure, weather → cache invalidate + reopt
-- **Chaos simulator** — burst incidents + failures for live demos
-- **Realtime** — Socket.IO rooms for regions, incidents, agent traces
-- **Alerts** — Telegram (free), email (Nodemailer), optional Twilio SMS — all fail-soft
-- **Observability** — `/health`, `/metrics`, persisted optimization + agent runs
-- **Docker one-command demo** — API + worker + Postgres + Redis
+### Multi-region continuous ingest
+EOCs and region gateways can flood the platform with incidents at any time. Each `POST /incidents` is validated, persisted as `PENDING`, scored for priority, and enqueued to BullMQ within milliseconds. Optional `idempotencyKey` prevents duplicate disasters from double-consuming scarce resources. Under extreme load, queue-depth checks return `503` (load shedding) so the system stays healthy instead of collapsing.
+
+### Resource coordination (national asset pool)
+The system tracks live pools of **ambulances, hospitals, rescue teams, helicopters, and EOCs** per region. Every unit carries location, availability status (`AVAILABLE` / `RESERVED` / `BUSY` / `MAINTENANCE` / `FAILED`), capacity / remaining capacity, and operational constraints (e.g. weather-sensitive helicopters). Assignments reserve capacity transactionally so two incidents cannot book the same bed or vehicle.
+
+### Min response-time optimization
+Dispatch is not “nearest on a map” alone — the objective is **minimize travel time in minutes**. Candidates are pruned with a **spatial grid**, then timed via **Google Maps Distance Matrix** when configured, else **Dijkstra shortest-time** on a region road mesh that skips blocked cells, else Haversine. A cost function blends ETA with type match and constraints; greedy min-cost + type diversity picks the operationally best set for streaming incidents.
+
+### Hungarian batch reoptimization
+When the world changes mid-operation, a region can re-solve many pending incidents together using the **Kuhn–Munkres (Hungarian)** algorithm. The cost matrix is travel minutes (resource → incident); the matcher globally minimizes **Σ ETA** under capacity, then commits with optimistic locks. That is how we stay near-optimal after cascading failures, not just greedy one-by-one.
+
+### Hot path vs cold path
+**Hot path (life-saving):** ingest → queue → algorithmic assign → DB commit (milliseconds).  
+**Cold path (trust & audit):** RAG agents + LLM narrative + Telegram/email (seconds, async).  
+If Claude/OpenAI/Maps/Telegram are down, dispatch still completes. AI never gates an ambulance.
+
+### RAG Agentic AI (explainable decisions)
+After assignment, a bounded agent pipeline runs with **strong citation-first system prompts**:
+1. **Triage** — refines severity/urgency from SOPs (JSON, grounded)  
+2. **Planner** — binds to optimizer facts only (cannot invent resources)  
+3. **Validator** — APPROVE / WARN / FLAG against protocols  
+4. **Explainer** — operator-ready rationale with `[chunk:ID]` citations  
+
+Claude is primary; OpenAI is fallback; algorithmic bullets if both fail. Traces live on `GET /incidents/:id/agent-run` and WebSocket `agent.step` events.
+
+### Hybrid RAG knowledge layer
+SOP corpus (flood, cyclone, fire, earthquake, hospital surge, utilization, reopt dynamics, BD EOC playbook) is chunked and searched with **query rewrite + embedding/keyword fusion**. `POST /rag/query` returns a grounded natural-language answer plus retrieved chunks — useful for judges and EOC operators asking protocol questions without touching live dispatch locks.
+
+### Environment events & continuous adaptation
+`POST /events` models the chaotic field: `ROAD_BLOCKED`, `HOSPITAL_FULL`, `VEHICLE_FAILED`, `WEATHER_HAZARD`, `COMMS_DELAY`, `CAPACITY_CHANGE`. Events invalidate ETA/route caches and enqueue region reopt (immediate for critical failures, lightly delayed for softer signals like COMMS_DELAY). Vehicle failure releases active assignments before rematch.
+
+### Chaos simulator (demo weapon)
+`POST /simulation/chaos` bursts many incidents across regions and can fail vehicles / block roads in one call. Judges can watch metrics, dispatches, and reopt react live — proof the platform handles cascading disasters, not only happy-path CRUD.
+
+### Realtime WebSocket feeds
+Socket.IO namespace `/realtime` lets dashboards join rooms `region:{id}`, `incident:{id}`, `agent:{incidentId}` and stream `assignment`, `agent.step`, and `environment` events. Redis adapter supports multi-instance API scale-out so subscribers are not stuck to one process.
+
+### Multi-channel alerts (fail-soft)
+Critical severity and major reopt releases fan out through:
+- **Telegram** (free mobile push — primary demo channel)  
+- **Email** via Nodemailer when SMTP is configured  
+- **SMS** via Twilio when trial credentials exist  
+
+Missing credentials skip that channel only; others still fire. No crash if Telegram/SMTP/Twilio is unset.
+
+### Observability & audit trail
+- `GET /health` — DB/Redis, queue depths, which integrations are configured, Maps circuit state  
+- `GET /metrics` — ingest count, assign latency, reopt/Hungarian runs, RAG hits, utilization %, status breakdowns  
+- Persisted `OptimizationRun`, `AgentRun` / `AgentStep`, and assignment explanations for after-action review  
+
+### Docker one-command national demo
+`docker compose up --build` starts **API + worker + Postgres + Redis** with migrations/seed. Scale with `--scale api=N --scale worker=M`. Same image, two commands — production-shaped packaging for hackathon reproducibility.
+
+### Security & API hygiene
+Mutating routes require `x-api-key`. Helmet, CORS, ValidationPipe (whitelist), and throttling protect the ingest surface. Secrets stay in env (`.env` is gitignored). Manual overrides are auditable with actor/reason.
+
+### Swagger-first developer experience
+Interactive OpenAPI at `/docs` documents every DTO and endpoint so judges can exercise the full lifecycle without Postman setup.
 
 ---
 
