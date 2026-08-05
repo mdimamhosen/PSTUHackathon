@@ -298,7 +298,7 @@ Core Prisma models:
 Resource types: `AMBULANCE | HOSPITAL | RESCUE_TEAM | HELICOPTER | EOC`  
 Incident status: `PENDING | ASSIGNED | IN_PROGRESS | RESOLVED | CANCELLED`
 
-Seeded demo regions: Dhaka (DAC), Chattogram (CTG), Khulna (KHL), Sylhet (SYL).
+Seeded demo regions: **all Bangladesh districts + cities** from [`countrycity-js`](https://www.npmjs.com/package/countrycity-js) (typically **70+ regions** and **hundreds of resources**, plus sample incidents). Override with `SEED_COUNTRY`, `SEED_MAX_REGIONS`, `SEED_INCIDENTS`.
 
 ---
 
@@ -604,7 +604,7 @@ API_URL=http://localhost:3000 API_KEY=change-me-demo-api-key npm run load-smoke
 | `npm run build` | Compile to `dist/` |
 | `npm run start:prod` | `node dist/main.js` |
 | `npm run start:worker:prod` | `node dist/worker.js` |
-| `npm run seed` | Seed regions, resources, knowledge |
+| `npm run seed` | Huge BD seed via `countrycity-js` (~135 regions, ~1500+ resources, 120 incidents) |
 | `npm run load-smoke` | Concurrent ingest stress |
 
 Prisma:
