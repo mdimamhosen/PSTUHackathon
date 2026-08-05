@@ -5,7 +5,6 @@ Country-scale NestJS backend that continuously ingests emergency incidents from 
 | | |
 |---|---|
 | **Repository** | [https://github.com/mdimamhosen/PSTUHackathon](https://github.com/mdimamhosen/PSTUHackathon) |
-| **Contact** | [mimam22.cse@bu.ac.bd](mailto:mimam22.cse@bu.ac.bd) |
 | **Swagger (local)** | [http://localhost:3000/docs](http://localhost:3000/docs) |
 | **Default API key** | `change-me-demo-api-key` (header `x-api-key`) |
 
@@ -583,12 +582,9 @@ npx prisma studio
 
 ---
 
-## Contact & repository
+## Repository
 
-| | |
-|---|---|
-| **GitHub** | [https://github.com/mdimamhosen/PSTUHackathon](https://github.com/mdimamhosen/PSTUHackathon) |
-| **Email** | [mimam22.cse@bu.ac.bd](mailto:mimam22.cse@bu.ac.bd) |
+**GitHub:** [https://github.com/mdimamhosen/PSTUHackathon](https://github.com/mdimamhosen/PSTUHackathon)
 
 ---
 
