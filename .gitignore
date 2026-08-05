@@ -1,0 +1,37 @@
+# dependencies & build
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+
+# secrets
+.env
+.env.local
+.env.*.local
+
+# generated
+/generated/
+*.tsbuildinfo
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+
+# Extra docs (single source of truth is README.md)
+docs/
+
+# Prisma / agent skill clutter — do not push
+.agents/
+.claude/
+.windsurf/
+.cursor/
+skills-lock.json
+**/.skills/
+**/skills/
+
+# OS / misc
+Thumbs.db
+.turbo/
+.tmp/

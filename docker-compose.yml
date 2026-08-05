@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: emergency
+      POSTGRES_PASSWORD: emergency
+      POSTGRES_DB: emergency
+    ports:
+      - "55432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-pgvector.sql:/docker-entrypoint-initdb.d/01-pgvector.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emergency -d emergency"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://emergency:emergency@postgres:5432/emergency?schema=public
+      REDIS_URL: redis://redis:6379
+      WORKER_MODE: "false"
+      RUN_MIGRATIONS: "true"
+      RUN_SEED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["node", "dist/main.js"]
+
+  worker:
+    build: .
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://emergency:emergency@postgres:5432/emergency?schema=public
+      REDIS_URL: redis://redis:6379
+      WORKER_MODE: "true"
+      RUN_MIGRATIONS: "false"
+      RUN_SEED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    command: ["node", "dist/worker.js"]
+    healthcheck:
+      disable: true
+
+volumes:
+  pgdata:

@@ -1,0 +1,246 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ResourceType {
+  AMBULANCE
+  HOSPITAL
+  RESCUE_TEAM
+  HELICOPTER
+  EOC
+}
+
+enum ResourceStatus {
+  AVAILABLE
+  RESERVED
+  BUSY
+  MAINTENANCE
+  FAILED
+}
+
+enum IncidentStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CANCELLED
+}
+
+enum AssignmentStatus {
+  PROPOSED
+  ASSIGNED
+  ACKNOWLEDGED
+  EN_ROUTE
+  COMPLETED
+  RELEASED
+  FAILED
+}
+
+enum EnvironmentEventType {
+  ROAD_BLOCKED
+  HOSPITAL_FULL
+  VEHICLE_FAILED
+  COMMS_DELAY
+  WEATHER_HAZARD
+  CAPACITY_CHANGE
+}
+
+enum AgentRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+model Region {
+  id              String     @id @default(cuid())
+  code            String     @unique
+  name            String
+  minLat          Float
+  maxLat          Float
+  minLng          Float
+  maxLng          Float
+  eocEmail        String?
+  telegramChatId  String?
+  contactPhone    String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  incidents       Incident[]
+  resources       Resource[]
+  events          EnvironmentEvent[]
+
+  @@index([code])
+}
+
+model Incident {
+  id               String         @id @default(cuid())
+  idempotencyKey   String?        @unique
+  regionId         String
+  region           Region         @relation(fields: [regionId], references: [id])
+  title            String
+  description      String?
+  lat              Float
+  lng              Float
+  severity         Int
+  affectedCount    Int            @default(1)
+  timeSensitivity  Int            @default(3)
+  resourceNeeds    Json
+  environment      Json?
+  status           IncidentStatus @default(PENDING)
+  priorityScore    Float          @default(0)
+  disasterType     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  assignments      DispatchAssignment[]
+  optimizationRuns OptimizationRun[]
+  agentRuns        AgentRun[]
+  events           EnvironmentEvent[]
+
+  @@index([status, severity, createdAt])
+  @@index([regionId, status])
+  @@index([priorityScore])
+}
+
+model Resource {
+  id                String         @id @default(cuid())
+  regionId          String
+  region            Region         @relation(fields: [regionId], references: [id])
+  name              String
+  type              ResourceType
+  lat               Float
+  lng               Float
+  status            ResourceStatus @default(AVAILABLE)
+  capacity          Int            @default(1)
+  remainingCapacity Int            @default(1)
+  constraints       Json?
+  version           Int            @default(1)
+  lastHeartbeatAt   DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  assignments       DispatchAssignment[]
+
+  @@index([type, status, regionId])
+  @@index([regionId, status])
+  @@index([status, remainingCapacity])
+}
+
+model DispatchAssignment {
+  id           String           @id @default(cuid())
+  incidentId   String
+  incident     Incident         @relation(fields: [incidentId], references: [id])
+  resourceId   String
+  resource     Resource         @relation(fields: [resourceId], references: [id])
+  role         String
+  etaMinutes   Float
+  score        Float
+  scoreBreakdown Json?
+  explanation  String?
+  citations    Json?
+  status       AssignmentStatus @default(ASSIGNED)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@index([incidentId])
+  @@index([resourceId, status])
+  @@unique([incidentId, resourceId, role])
+}
+
+model EnvironmentEvent {
+  id          String               @id @default(cuid())
+  regionId    String
+  region      Region               @relation(fields: [regionId], references: [id])
+  incidentId  String?
+  incident    Incident?            @relation(fields: [incidentId], references: [id])
+  type        EnvironmentEventType
+  payload     Json
+  active      Boolean              @default(true)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([regionId, active, type])
+}
+
+model OptimizationRun {
+  id              String   @id @default(cuid())
+  incidentId      String
+  incident        Incident @relation(fields: [incidentId], references: [id])
+  regionId        String
+  inputSnapshot   Json
+  selectedIds     Json
+  scores          Json
+  latencyMs       Int
+  explanation     String?
+  trigger         String
+  createdAt       DateTime @default(now())
+
+  @@index([incidentId, createdAt])
+  @@index([regionId, createdAt])
+}
+
+model KnowledgeDocument {
+  id           String           @id @default(cuid())
+  title        String
+  source       String
+  disasterType String?
+  regionScope  String?
+  content      String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  chunks       KnowledgeChunk[]
+
+  @@index([disasterType])
+}
+
+model KnowledgeChunk {
+  id         String            @id @default(cuid())
+  documentId String
+  document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content    String
+  /// Stored as pgvector via raw SQL; Prisma keeps a float array mirror for portability
+  embedding  Float[]
+  metadata   Json?
+  createdAt  DateTime          @default(now())
+
+  @@index([documentId])
+}
+
+model AgentRun {
+  id          String         @id @default(cuid())
+  incidentId  String
+  incident    Incident       @relation(fields: [incidentId], references: [id])
+  status      AgentRunStatus @default(PENDING)
+  citations   Json?
+  latencyMs   Int?
+  error       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  steps       AgentStep[]
+
+  @@index([incidentId, createdAt])
+}
+
+model AgentStep {
+  id           String   @id @default(cuid())
+  runId        String
+  run          AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  agentName    String
+  toolCalls    Json?
+  inputSummary String?
+  outputSummary String?
+  createdAt    DateTime @default(now())
+
+  @@index([runId])
+}
+
+model MetricCounter {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Float    @default(0)
+  updatedAt DateTime @updatedAt
+}
