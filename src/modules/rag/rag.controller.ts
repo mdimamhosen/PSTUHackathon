@@ -31,8 +31,8 @@ export class RagController {
 
   @Post('query')
   async query(@Body() dto: RagQueryDto) {
-    const hits = await this.rag.search(dto.query, 5);
-    return { enabled: this.rag.enabled, hits };
+    // Grounded answer with strong RAG system prompt + hybrid retrieval
+    return this.rag.answerQuery(dto.query);
   }
 
   @Post('ingest')

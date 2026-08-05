@@ -3,6 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MetricsService } from '../metrics/metrics.service';
+import {
+  RAG_QUERY_REWRITE_SYSTEM,
+  RAG_QUERY_SYSTEM,
+  buildRagContextBlock,
+} from '../agents/prompts';
 
 export type RagHit = {
   chunkId: string;
@@ -10,6 +15,7 @@ export type RagHit = {
   content: string;
   title?: string;
   score: number;
+  disasterType?: string | null;
 };
 
 @Injectable()
@@ -46,7 +52,7 @@ export class RagService {
         regionScope: input.regionScope,
       },
     });
-    const chunks = chunkText(input.content, 800);
+    const chunks = chunkText(input.content, 700);
     for (const content of chunks) {
       const embedding = await this.embed(content);
       await this.prisma.knowledgeChunk.create({
@@ -61,42 +67,170 @@ export class RagService {
     return doc;
   }
 
-  async search(query: string, topK = 5): Promise<RagHit[]> {
+  /** Multi-query hybrid retrieval for an incident. */
+  async searchForIncident(incident: {
+    title: string;
+    disasterType?: string | null;
+    severity: number;
+    affectedCount: number;
+    environment?: unknown;
+    resourceNeeds?: unknown;
+  }): Promise<RagHit[]> {
+    const base = [
+      `${incident.disasterType || 'emergency'} severity ${incident.severity} ${incident.title} response protocol`,
+      `${incident.disasterType || 'disaster'} resource dispatch ambulance hospital rescue helicopter`,
+      `triage surge capacity time-critical affected ${incident.affectedCount}`,
+    ];
+    const env = incident.environment as { weather?: string } | null;
+    if (env?.weather) {
+      base.push(`${env.weather} weather helicopter constraints emergency`);
+    }
+    const needs = incident.resourceNeeds as { types?: string[] } | null;
+    if (needs?.types?.length) {
+      base.push(`${needs.types.join(' ')} allocation SOP`);
+    }
+
+    const rewritten = await this.rewriteQueries(
+      `${incident.title} ${incident.disasterType || ''}`.trim(),
+    );
+    const queries = [...base, ...rewritten].slice(0, 6);
+
+    const merged = new Map<string, RagHit>();
+    for (const q of queries) {
+      const hits = await this.search(q, 4, incident.disasterType || undefined);
+      for (const h of hits) {
+        const prev = merged.get(h.chunkId);
+        if (!prev || h.score > prev.score) merged.set(h.chunkId, h);
+      }
+    }
+    return [...merged.values()].sort((a, b) => b.score - a.score).slice(0, 8);
+  }
+
+  async search(
+    query: string,
+    topK = 5,
+    disasterType?: string,
+  ): Promise<RagHit[]> {
     const qEmbed = await this.embed(query);
     const chunks = await this.prisma.knowledgeChunk.findMany({
-      take: 200,
+      take: 300,
       include: { document: true },
+      where: disasterType
+        ? {
+            OR: [
+              { document: { disasterType } },
+              { document: { disasterType: 'general' } },
+              { document: { disasterType: null } },
+            ],
+          }
+        : undefined,
       orderBy: { createdAt: 'desc' },
     });
     if (!chunks.length) return [];
 
-    let ranked: RagHit[];
-    if (qEmbed?.length) {
-      ranked = chunks
-        .map((c) => ({
-          chunkId: c.id,
-          documentId: c.documentId,
-          content: c.content,
-          title: c.document.title,
-          score: cosine(qEmbed, c.embedding || []),
-        }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, topK);
-    } else {
-      const q = query.toLowerCase();
-      ranked = chunks
-        .map((c) => ({
-          chunkId: c.id,
-          documentId: c.documentId,
-          content: c.content,
-          title: c.document.title,
-          score: c.content.toLowerCase().includes(q) ? 0.5 : 0.1,
-        }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, topK);
+    const tokens = tokenize(query);
+    const ranked: RagHit[] = chunks.map((c) => {
+      const embScore =
+        qEmbed?.length && c.embedding?.length
+          ? cosine(qEmbed, c.embedding)
+          : 0;
+      const kwScore = keywordScore(c.content + ' ' + (c.document.title || ''), tokens);
+      const typeBoost =
+        disasterType && c.document.disasterType === disasterType ? 0.08 : 0;
+      // Hybrid: embedding dominates when present; keywords fill gaps
+      const score =
+        (qEmbed?.length ? 0.72 * embScore + 0.28 * kwScore : kwScore) + typeBoost;
+      return {
+        chunkId: c.id,
+        documentId: c.documentId,
+        content: c.content,
+        title: c.document.title,
+        disasterType: c.document.disasterType,
+        score,
+      };
+    });
+
+    ranked.sort((a, b) => b.score - a.score);
+    const top = ranked.slice(0, topK);
+    if (top.length) await this.metrics.incr('rag.hits');
+    return top;
+  }
+
+  /** Grounded Q&A for operators / judges. */
+  async answerQuery(query: string) {
+    const rewritten = await this.rewriteQueries(query);
+    const merged = new Map<string, RagHit>();
+    for (const q of [query, ...rewritten]) {
+      for (const h of await this.search(q, 5)) {
+        const prev = merged.get(h.chunkId);
+        if (!prev || h.score > prev.score) merged.set(h.chunkId, h);
+      }
     }
-    if (ranked.length) await this.metrics.incr('rag.hits');
-    return ranked;
+    const hits = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, 6);
+    const context = buildRagContextBlock(hits);
+
+    let answer = '';
+    if (this.openai) {
+      try {
+        const res = await this.openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          temperature: 0.15,
+          max_tokens: 900,
+          messages: [
+            { role: 'system', content: RAG_QUERY_SYSTEM },
+            {
+              role: 'user',
+              content: `OPERATOR_QUESTION:\n${query}\n\n${context}\n\nAnswer now with citations.`,
+            },
+          ],
+        });
+        answer = res.choices[0]?.message?.content || '';
+      } catch (err) {
+        this.logger.warn(`RAG answer LLM failed: ${String(err)}`);
+      }
+    }
+
+    if (!answer) {
+      answer = [
+        '## Direct answer',
+        hits.length
+          ? 'Retrieved protocol excerpts below (LLM answer unavailable — showing grounded chunks).'
+          : 'No matching SOP chunks found in the knowledge base.',
+        '',
+        '## Citations',
+        ...hits.map(
+          (h) =>
+            `- [chunk:${h.chunkId}] ${h.title || 'doc'}: ${h.content.slice(0, 240)}...`,
+        ),
+      ].join('\n');
+    }
+
+    return { enabled: this.enabled, answer, hits };
+  }
+
+  private async rewriteQueries(question: string): Promise<string[]> {
+    if (!this.openai || question.length < 8) return [];
+    try {
+      const res = await this.openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        temperature: 0,
+        max_tokens: 200,
+        messages: [
+          { role: 'system', content: RAG_QUERY_REWRITE_SYSTEM },
+          { role: 'user', content: question },
+        ],
+      });
+      const text = res.choices[0]?.message?.content || '';
+      const start = text.indexOf('{');
+      const end = text.lastIndexOf('}');
+      if (start < 0 || end < 0) return [];
+      const parsed = JSON.parse(text.slice(start, end + 1)) as {
+        queries?: string[];
+      };
+      return (parsed.queries || []).filter((q) => typeof q === 'string').slice(0, 3);
+    } catch {
+      return [];
+    }
   }
 
   private async embed(text: string): Promise<number[] | null> {
@@ -122,6 +256,21 @@ function chunkText(text: string, size: number): string[] {
     parts.push(clean.slice(i, i + size));
   }
   return parts.length ? parts : [clean];
+}
+
+function tokenize(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 2);
+}
+
+function keywordScore(text: string, tokens: string[]): number {
+  if (!tokens.length) return 0.05;
+  const hay = text.toLowerCase();
+  let hits = 0;
+  for (const t of tokens) if (hay.includes(t)) hits++;
+  return hits / tokens.length;
 }
 
 function cosine(a: number[], b: number[]): number {
