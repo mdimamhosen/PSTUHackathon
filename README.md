@@ -126,7 +126,7 @@ Every important choice is justified in the sections below (modular NestJS + work
 
 | Extra | Why it helps win |
 |-------|------------------|
-| **RAG Agentic AI** (Triage → Planner → Validator → Explainer) | Explainable decisions with **SOP citations**, not black-box AI |
+| **RAG Agentic AI** (Triage → Planner → Validator → Explainer) with **huge grounded system prompts** + hybrid multi-query retrieval | Explainable decisions with **SOP citations**, not black-box AI |
 | **Hot path vs cold path** | Life-saving assign never waits on LLM |
 | **Spatial grid + Dijkstra shortest-time + Hungarian matching** | Named, scalable algorithms judges can probe |
 | **Google Maps ETA** with Dijkstra/Haversine fallback | Real roads when keyed; still works offline |
@@ -150,7 +150,8 @@ Every important choice is justified in the sections below (modular NestJS + work
 - **Min response-time optimization** — spatial grid prune → Google Maps / Dijkstra shortest-time → min-cost assign
 - **Hungarian batch reopt** — globally minimize Σ ETA when roads fail, vehicles fail, hospitals fill
 - **Hot path vs cold path** — algorithmic dispatch in milliseconds; RAG agents explain after assign
-- **RAG Agentic AI** — Triage → Planner → Validator → Explainer with SOP citations (Claude / OpenAI)
+- **RAG Agentic AI** — Triage → Planner → Validator → Explainer with **strong citation-first system prompts** + SOP citations (Claude / OpenAI)
+- **Hybrid RAG** — query rewrite + embedding/keyword fusion; `POST /rag/query` returns grounded answers with `[chunk:ID]`
 - **Environment events** — road blocks, hospital full, vehicle failure, weather → cache invalidate + reopt
 - **Chaos simulator** — burst incidents + failures for live demos
 - **Realtime** — Socket.IO rooms for regions, incidents, agent traces

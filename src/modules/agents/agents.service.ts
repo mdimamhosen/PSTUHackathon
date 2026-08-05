@@ -13,6 +13,7 @@ import {
   RAG_VALIDATOR_SYSTEM,
   buildRagContextBlock,
 } from './prompts';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class AgentsService {
@@ -123,7 +124,7 @@ ${ragBlock}
 
 Produce the triage JSON now.`;
       const triageRaw = await this.chat(RAG_TRIAGE_SYSTEM, triageUser, 700);
-      const triage = safeJson(triageRaw) || {
+      const triage = (safeJson(triageRaw) || {
         refinedSeverity: incident.severity,
         severityRationale: 'Fallback: using optimizer severity',
         urgencyClass:
@@ -137,6 +138,11 @@ Produce the triage JSON now.`;
         protocolKeys: [],
         confidence: 0.3,
         citations: ragHits.map((h) => h.chunkId),
+      }) as {
+        refinedSeverity?: number;
+        urgencyClass?: string;
+        confidence?: number;
+        [k: string]: unknown;
       };
       await this.prisma.agentStep.create({
         data: {
@@ -198,14 +204,14 @@ Validate feasibility and protocol alignment. Return JSON.`;
         validatorUser,
         700,
       );
-      const validation = safeJson(validatorRaw) || {
+      const validation = (safeJson(validatorRaw) || {
         verdict: 'APPROVE',
         feasibilityNotes: ['Fallback approve: algorithmic assignment retained'],
         protocolGaps: [],
         suggestedAdjustments: [],
         citations: ragHits.map((h) => h.chunkId),
         confidence: 0.35,
-      };
+      }) as { verdict?: string; [k: string]: unknown };
       await this.prisma.agentStep.create({
         data: {
           runId: run.id,
@@ -268,7 +274,7 @@ Write the operator explanation now.`;
               triage,
               validation,
               chunks: citations,
-            },
+            } as Prisma.InputJsonValue,
           },
         });
       }
@@ -279,7 +285,11 @@ Write the operator explanation now.`;
         where: { id: run.id },
         data: {
           status: 'COMPLETED',
-          citations: { triage, validation, chunks: citations },
+          citations: {
+            triage,
+            validation,
+            chunks: citations,
+          } as Prisma.InputJsonValue,
           latencyMs,
         },
       });

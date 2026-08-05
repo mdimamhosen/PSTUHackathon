@@ -51,6 +51,24 @@ export class EventsService {
       });
     }
 
+    if (input.type === 'CAPACITY_CHANGE' && input.payload.resourceId) {
+      const remaining = Number(input.payload.remainingCapacity ?? 0);
+      await this.prisma.resource.update({
+        where: { id: String(input.payload.resourceId) },
+        data: {
+          remainingCapacity: Math.max(0, remaining),
+          status: remaining > 0 ? 'AVAILABLE' : 'BUSY',
+          version: { increment: 1 },
+        },
+      });
+    }
+
+    // COMMS_DELAY: record + soft reopt (do not mark resources failed without heartbeat evidence)
+    const immediate =
+      input.type === 'VEHICLE_FAILED' ||
+      input.type === 'ROAD_BLOCKED' ||
+      input.type === 'HOSPITAL_FULL';
+
     const event = await this.prisma.environmentEvent.create({
       data: {
         regionId: region.id,
@@ -68,10 +86,7 @@ export class EventsService {
       { regionId: region.id, reason: input.type },
       {
         jobId: `reopt-${region.id}`,
-        delay:
-          input.type.startsWith('VEHICLE') || input.type === 'ROAD_BLOCKED'
-            ? 0
-            : 2000,
+        delay: immediate ? 0 : input.type === 'COMMS_DELAY' ? 3000 : 2000,
         removeOnComplete: 1000,
       },
     );

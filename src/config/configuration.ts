@@ -21,7 +21,7 @@ const configuration = () => ({
     authToken: process.env.TWILIO_AUTH_TOKEN || '',
     fromNumber: process.env.TWILIO_FROM_NUMBER || '',
   },
-  agentTimeoutMs: parseInt(process.env.AGENT_TIMEOUT_MS || '15000', 10),
+  agentTimeoutMs: parseInt(process.env.AGENT_TIMEOUT_MS || '20000', 10),
   embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
   maxQueueDepth: parseInt(process.env.MAX_QUEUE_DEPTH || '5000', 10),
   workerMode: process.env.WORKER_MODE === 'true',
