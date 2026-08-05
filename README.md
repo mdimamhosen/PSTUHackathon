@@ -2,10 +2,18 @@
 
 Country-scale NestJS backend that continuously ingests emergency incidents from multiple regions, allocates ambulances / hospitals / rescue teams / helicopters / EOCs, re-optimizes when the environment changes, and explains decisions with a RAG Agentic AI layer.
 
+| | |
+|---|---|
+| **Repository** | [https://github.com/mdimamhosen/PSTUHackathon](https://github.com/mdimamhosen/PSTUHackathon) |
+| **Contact** | [mimam22.cse@bu.ac.bd](mailto:mimam22.cse@bu.ac.bd) |
+| **Swagger (local)** | [http://localhost:3000/docs](http://localhost:3000/docs) |
+| **Default API key** | `change-me-demo-api-key` (header `x-api-key`) |
+
 ---
 
 ## Table of contents
 
+0. [Problem statement](#0-problem-statement) · [Objectives → our solution](#objectives--how-we-satisfy-them) · [What we built vs extras](#what-we-built-vs-what-we-added-extra)
 1. [Features](#1-features)
 2. [Tech stack](#2-tech-stack)
 3. [Architecture](#3-architecture)
@@ -22,6 +30,117 @@ Country-scale NestJS backend that continuously ingests emergency incidents from 
 14. [Project structure](#14-project-structure)
 15. [Scripts](#15-scripts)
 16. [Troubleshooting](#16-troubleshooting)
+
+---
+
+## 0. Problem statement
+
+> **Hackathon challenge — Intelligent Emergency Response & Resource Optimization Platform**
+
+Design a backend system capable of managing and optimizing emergency response operations for a **large-scale country-wide disaster management network**.
+
+The platform must **continuously receive emergency incidents from multiple regions** while coordinating available emergency resources such as **ambulances, hospitals, rescue teams, helicopters, and emergency operation centers**.
+
+### Incident characteristics (required)
+
+| Characteristic | How we model it |
+|----------------|-----------------|
+| Geographic location | `Incident.lat` / `Incident.lng` |
+| Severity level | `severity` 1–5 + `priorityScore` |
+| Number of affected people | `affectedCount` |
+| Time sensitivity | `timeSensitivity` |
+| Resource requirements | `resourceNeeds` JSON (types, etc.) |
+| Environmental condition | `environment` JSON + `disasterType` |
+
+### Resource dynamic properties (required)
+
+| Property | How we model it |
+|----------|-----------------|
+| Current location | `Resource.lat` / `lng` |
+| Availability | `status` (`AVAILABLE`, `RESERVED`, `BUSY`, `MAINTENANCE`, `FAILED`) |
+| Capacity | `capacity` / `remainingCapacity` |
+| Estimated travel time | Maps / Dijkstra / Haversine → `DispatchAssignment.etaMinutes` |
+| Operational constraints | `constraints` JSON |
+| Temporary failures / maintenance | `POST /resources/:id/fail`, `MAINTENANCE` / `FAILED` + reopt |
+
+### Changing environment (required)
+
+New requests may arrive anytime; roads may become unavailable; hospitals may fill; vehicles may fail; communication delays may occur; availability may change unexpectedly.
+
+**Our response:** BullMQ streaming ingest + `POST /events` + region-scoped continuous reoptimization (Hungarian) + circuit breakers / fail-soft integrations.
+
+### Judging expectations for the solution
+
+The system must continuously make **near-optimal**, **explainable**, and **operationally feasible** decisions while adapting in **near real time**, remaining **reliable, scalable, fault tolerant, and maintainable** under heavy load.
+
+---
+
+### Objectives → how we satisfy them
+
+| Objective | Our implementation |
+|-----------|-------------------|
+| Accept continuous stream of emergency events | `POST /incidents` + Redis/BullMQ backpressure + idempotency keys |
+| Prioritize incidents intelligently | Weighted `priorityScore` + critical job priority (severity ≥ 4) |
+| Allocate the most appropriate resources | Spatial prune + min travel-time cost + type/capacity/constraints |
+| Continuously re-optimize when environment changes | `POST /events` / resource fail → `region.reopt` (Hungarian) |
+| Minimize overall response time | Objective = minimize Σ ETA (Maps / Dijkstra shortest-**time**) |
+| Maximize resource utilization | Capacity-fit in scoring; track `%` on `/metrics` |
+| Prevent resource conflicts | Prisma TX + `Resource.version` optimistic locks + unique assignment roles |
+| Remain operational when parts unavailable | Circuit breakers; Maps→Dijkstra/Haversine; LLM→algo explain; notify skip |
+| Scale with users / incidents / resources | Stateless API/worker replicas, region-sharded jobs, Redis cache |
+
+### Functional expectations → where justified
+
+| Expectation | Covered in |
+|-------------|------------|
+| Overall system architecture | [§3 Architecture](#3-architecture) |
+| Data flow | [§3 Data flow](#data-flow) |
+| Service interactions | [§3](#3-architecture) + queues table |
+| Decision-making strategy | [§4](#4-decision--optimization-algorithms) |
+| Optimization approach | [§4](#4-decision--optimization-algorithms) + `GET /optimization/strategy` |
+| Failure recovery strategy | [§12](#12-reliability-scale-security) |
+| Scalability strategy | [§12](#12-reliability-scale-security) |
+| Performance considerations | Hot/cold path + metrics + load-smoke |
+| Security considerations | [§12](#12-reliability-scale-security) |
+| Monitoring and observability | `/health`, `/metrics`, agent/optimization runs |
+| Database design | [§5 Data model](#5-data-model) |
+| Caching strategy | [§12 Caching](#caching) |
+| Event processing strategy | BullMQ queues in [§3](#queues) |
+
+Every important choice is justified in the sections below (modular NestJS + worker, hybrid algo+AI, Hungarian/Dijkstra, Docker, fail-soft keys, etc.).
+
+---
+
+### What we built vs what we added extra
+
+#### Required by the problem (delivered)
+
+- Multi-region continuous incident ingest and resource coordination (ambulance, hospital, rescue, helicopter, EOC)
+- Incident + resource dynamic attributes as specified
+- Near-real-time decisions under changing conditions (events, failures, capacity)
+- Prioritization, allocation, continuous re-optimization
+- Minimize response time, utilization awareness, conflict prevention
+- High-throughput, reliable, scalable, fault-tolerant backend design
+- Clear architecture / data flow / optimization / recovery / scale / security / DB / cache / events (this README + live `/optimization/strategy`)
+
+#### Extra we added (differentiators for 1st place)
+
+| Extra | Why it helps win |
+|-------|------------------|
+| **RAG Agentic AI** (Triage → Planner → Validator → Explainer) | Explainable decisions with **SOP citations**, not black-box AI |
+| **Hot path vs cold path** | Life-saving assign never waits on LLM |
+| **Spatial grid + Dijkstra shortest-time + Hungarian matching** | Named, scalable algorithms judges can probe |
+| **Google Maps ETA** with Dijkstra/Haversine fallback | Real roads when keyed; still works offline |
+| **Claude + OpenAI** (agents + embeddings) | Production-shaped AI with soft degrade |
+| **Telegram free phone alerts** (+ email / optional Twilio) | Mobile EOC notify without paid SMS |
+| **Swagger UI** at `/docs` | Instant judge demo surface |
+| **Chaos simulator** `POST /simulation/chaos` | Live proof of reopt under cascading failure |
+| **WebSocket agent traces** | Watch decisions happen in real time |
+| **`/health` + `/metrics`** | Observability baked in |
+| **Full Docker Compose** (api + worker + Postgres + Redis) | One-command reproducible demo |
+| **Bangladesh region seed + SOP knowledge corpus** | Ready-to-run national-scale story |
+| **Load-smoke script** | Throughput narrative under burst ingest |
+| **Idempotency + load shedding + API key security** | Production hygiene beyond the brief |
 
 ---
 
@@ -461,6 +580,15 @@ npx prisma studio
 | `401` on POST | Send `x-api-key` matching `API_KEY` |
 | No RAG embeddings | Set `OPENAI_API_KEY` (keyword fallback still works without it) |
 | Telegram silent | Bot token + chat id; user/group must have talked to the bot |
+
+---
+
+## Contact & repository
+
+| | |
+|---|---|
+| **GitHub** | [https://github.com/mdimamhosen/PSTUHackathon](https://github.com/mdimamhosen/PSTUHackathon) |
+| **Email** | [mimam22.cse@bu.ac.bd](mailto:mimam22.cse@bu.ac.bd) |
 
 ---
 
