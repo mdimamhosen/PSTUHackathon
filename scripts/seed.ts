@@ -111,7 +111,13 @@ async function main() {
           ? 'cyclone'
           : title.includes('fire')
             ? 'fire'
-            : 'general';
+            : title.includes('earthquake')
+              ? 'earthquake'
+              : title.includes('bangladesh') || title.includes('eoc')
+                ? 'general'
+                : title.includes('reoptimization') || title.includes('conflict')
+                  ? 'general'
+                  : 'general';
       const doc = await prisma.knowledgeDocument.create({
         data: {
           title,
