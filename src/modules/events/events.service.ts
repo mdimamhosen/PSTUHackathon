@@ -7,6 +7,8 @@ import { RegionsService } from '../regions/regions.service';
 import { QUEUE_REOPT } from '../queues/queue.constants';
 import { MapsService } from '../maps/maps.service';
 import { RoutingService } from '../optimization/routing.service';
+import { KafkaService } from '../kafka/kafka.service';
+import { KafkaTopics } from '../kafka/kafka.topics';
 
 @Injectable()
 export class EventsService {
@@ -15,6 +17,7 @@ export class EventsService {
     private readonly regions: RegionsService,
     private readonly maps: MapsService,
     private readonly routing: RoutingService,
+    private readonly kafka: KafkaService,
     @InjectQueue(QUEUE_REOPT) private readonly reoptQueue: Queue,
   ) {}
 
@@ -90,6 +93,28 @@ export class EventsService {
         removeOnComplete: 1000,
       },
     );
+
+    void this.kafka.publish(
+      KafkaTopics.ENVIRONMENT_RECORDED,
+      {
+        id: event.id,
+        regionId: region.id,
+        type: event.type,
+        payload: event.payload,
+        incidentId: event.incidentId,
+      },
+      {
+        key: event.id,
+        regionId: region.id,
+        eventType: `environment.${event.type}`,
+      },
+    );
+    void this.kafka.publish(
+      KafkaTopics.REGION_REOPT_TRIGGERED,
+      { regionId: region.id, reason: input.type, eventId: event.id },
+      { key: region.id, regionId: region.id, eventType: 'region.reopt' },
+    );
+
     return event;
   }
 

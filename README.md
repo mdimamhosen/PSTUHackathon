@@ -78,7 +78,7 @@ The system must continuously make **near-optimal**, **explainable**, and **opera
 
 | Objective | Our implementation |
 |-----------|-------------------|
-| Accept continuous stream of emergency events | `POST /incidents` + Redis/BullMQ backpressure + idempotency keys |
+| Accept continuous stream of emergency events | **Kafka ingress** + `POST /incidents` + Redis/BullMQ backpressure + idempotency |
 | Prioritize incidents intelligently | Weighted `priorityScore` + critical job priority (severity ≥ 4) |
 | Allocate the most appropriate resources | Spatial prune + min travel-time cost + type/capacity/constraints |
 | Continuously re-optimize when environment changes | `POST /events` / resource fail → `region.reopt` (Hungarian) |
@@ -104,7 +104,7 @@ The system must continuously make **near-optimal**, **explainable**, and **opera
 | Monitoring and observability | `/health`, `/metrics`, agent/optimization runs |
 | Database design | [§5 Data model](#5-data-model) |
 | Caching strategy | [§12 Caching](#caching) |
-| Event processing strategy | BullMQ queues in [§3](#queues) |
+| Event processing strategy | Kafka bus + BullMQ queues in [§3](#queues-bullmq--kafka-bus) |
 
 Every important choice is justified in the sections below (modular NestJS + worker, hybrid algo+AI, Hungarian/Dijkstra, Docker, fail-soft keys, etc.).
 
@@ -146,7 +146,7 @@ Every important choice is justified in the sections below (modular NestJS + work
 ## 1. Features
 
 ### Multi-region continuous ingest
-EOCs and region gateways can flood the platform with incidents at any time. Each `POST /incidents` is validated, persisted as `PENDING`, scored for priority, and enqueued to BullMQ within milliseconds. Optional `idempotencyKey` prevents duplicate disasters from double-consuming scarce resources. Under extreme load, queue-depth checks return `503` (load shedding) so the system stays healthy instead of collapsing.
+EOCs and region gateways stream continuously via **Apache Kafka** (`emergency.*.ingress`) or HTTP. Kafka messages hit the same domain services as REST, then persist as `PENDING`, score priority, and enqueue BullMQ within milliseconds. Optional `idempotencyKey` prevents duplicate disasters from double-consuming scarce resources. Under extreme load, queue-depth checks return `503` (load shedding) so the system stays healthy instead of collapsing. Kafka publish is fail-soft — if the broker is down, HTTP ingest still works.
 
 ### Resource coordination (national asset pool)
 The system tracks live pools of **ambulances, hospitals, rescue teams, helicopters, and EOCs** per region. Every unit carries location, availability status (`AVAILABLE` / `RESERVED` / `BUSY` / `MAINTENANCE` / `FAILED`), capacity / remaining capacity, and operational constraints (e.g. weather-sensitive helicopters). Assignments reserve capacity transactionally so two incidents cannot book the same bed or vehicle.
@@ -197,7 +197,43 @@ Missing credentials skip that channel only; others still fire. No crash if Teleg
 - Persisted `OptimizationRun`, `AgentRun` / `AgentStep`, and assignment explanations for after-action review  
 
 ### Docker one-command national demo
-`docker compose up --build` starts **API + worker + Postgres + Redis** with migrations/seed. Scale with `--scale api=N --scale worker=M`. Same image, two commands — production-shaped packaging for hackathon reproducibility.
+`docker compose up --build` starts **API + worker + Postgres + Redis + Kafka** with migrations/seed. Scale with `--scale api=N --scale worker=M`. Same image, two commands — production-shaped packaging for hackathon reproducibility.
+
+### Apache Kafka real-time data collection
+Region gateways and sensors stream continuously into Kafka; the platform consumes and fans out without blocking hot-path assign.
+
+**Ingress topics (into platform):**
+- `emergency.incidents.ingress` → `IncidentsService.create` → BullMQ dispatch
+- `emergency.environment.ingress` → environment events + reopt
+- `emergency.resources.ingress` → create / update / fail resources
+
+**Domain fan-out (after durable write):**
+- `emergency.incidents.created` / `.updated`
+- `emergency.environment.recorded`
+- `emergency.resources.updated` / `.failed`
+- `emergency.dispatches.assigned`
+- `emergency.region.reopt.triggered`
+- `emergency.dlq` — poison messages / handler failures
+
+**Design rules:**
+- Kafka = durable real-time bus for multi-region collection & observability
+- BullMQ = operational job queue for assign / reopt / agents / notify (unchanged hot path)
+- Publish is **fail-soft** (API still returns 201 if Kafka is down)
+- Consumers use idempotency keys; topics auto-created by admin on boot
+- Demo bridge: `POST /kafka/publish`, status: `GET /kafka/status`
+
+Envelope shape:
+```json
+{
+  "eventId": "uuid",
+  "eventType": "incident.created",
+  "occurredAt": "ISO-8601",
+  "source": "region-gateway-ctg",
+  "regionId": "...",
+  "idempotencyKey": "...",
+  "payload": { }
+}
+```
 
 ### Security & API hygiene
 Mutating routes require `x-api-key`. Helmet, CORS, ValidationPipe (whitelist), and throttling protect the ingest surface. Secrets stay in env (`.env` is gitignored). Manual overrides are auditable with actor/reason.
@@ -220,7 +256,8 @@ Interactive OpenAPI at `/docs` documents every DTO and endpoint so judges can ex
 | AI | Anthropic Claude (agents), OpenAI (embeddings + LLM fallback) |
 | RAG | Knowledge markdown corpus + cosine retrieval (embeddings when OpenAI key set) |
 | Alerts | Telegram Bot API, Nodemailer, optional Twilio |
-| Packaging | Docker + Docker Compose (`api`, `worker`, `postgres`, `redis`) |
+| Packaging | Docker + Docker Compose (`api`, `worker`, `postgres`, `redis`, **`kafka`**) |
+| Real-time bus | **Apache Kafka** (KRaft) — region ingress + domain event fan-out + DLQ |
 
 ---
 
@@ -253,14 +290,22 @@ AI never blocks life-saving dispatch. If Maps/LLM/Telegram are down, hot path st
 4. Worker enqueues `incident.agent` + critical `notify.alert`
 5. `POST /events` invalidates routing caches and enqueues `region.reopt` (coalesced per region)
 
-### Queues
+### Queues (BullMQ) + Kafka bus
 
-| Queue | Purpose |
-|-------|---------|
+| BullMQ queue | Purpose |
+|--------------|---------|
 | `incident.dispatch` | Hot-path assign |
 | `region.reopt` | Region batch reoptimization |
 | `incident.agent` | Cold-path RAG agents |
 | `notify.alert` | Multi-channel alerts |
+
+| Kafka topic | Direction | Purpose |
+|-------------|-----------|---------|
+| `emergency.incidents.ingress` | In | Real-time incident collection |
+| `emergency.environment.ingress` | In | Road / hospital / vehicle events |
+| `emergency.resources.ingress` | In | Resource create / update / fail |
+| `emergency.incidents.created` (+ others) | Out | Domain fan-out after persist |
+| `emergency.dlq` | Out | Poison / failed handling |
 
 ---
 
@@ -380,8 +425,13 @@ Copy from `.env.example`.
 | `EMBEDDING_MODEL` | Default `text-embedding-3-small` |
 | `MAX_QUEUE_DEPTH` | Load-shed threshold (default `5000`) |
 | `PORT` | Default `3000` |
+| `KAFKA_ENABLED` | `true` to force on (also on if `KAFKA_BROKERS` set) |
+| `KAFKA_BROKERS` | Host apps: `localhost:9094`; Compose services: `kafka:9092` |
+| `KAFKA_CLIENT_ID` | Producer/consumer client id |
+| `KAFKA_PARTITIONS` | Topic partitions on auto-create (default `6`) |
+| `KAFKA_REPLICATION_FACTOR` | Default `1` (single-broker Compose) |
 
-**Fail-soft rule:** missing Maps / Claude / OpenAI / Telegram / SMTP / Twilio never crashes dispatch. Maps → Dijkstra/Haversine; LLM → algorithmic bullets; missing notify channel → skip that channel only.
+**Fail-soft rule:** missing Maps / Claude / OpenAI / Telegram / SMTP / Twilio / Kafka never crashes dispatch. Maps → Dijkstra/Haversine; LLM → algorithmic bullets; missing notify channel → skip that channel only; Kafka down → HTTP ingest still works.
 
 ---
 
@@ -391,7 +441,7 @@ After start, open **http://localhost:3000/docs**.
 
 - Interactive try-out for all REST endpoints  
 - Use **Authorize** / header `x-api-key: change-me-demo-api-key`  
-- Public routes (no key): `/health`, `/metrics`, `/regions`, `/optimization/strategy`  
+- Public routes (no key): `/health`, `/metrics`, `/regions`, `/optimization/strategy`, `/kafka/status`, `/kafka/topics`  
 - Schema models and DTOs are generated from Nest decorators + class-validator
 
 OpenAPI document is also available from the Swagger UI JSON link on that page.
@@ -407,9 +457,12 @@ Auth header (mutating routes): `x-api-key: <API_KEY>`
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/health` | Public | DB, Redis, queue depths, integration flags, Maps circuit |
+| GET | `/health` | Public | DB, Redis, queue depths, Kafka, integration flags, Maps circuit |
 | GET | `/metrics` | Public | Ingest, assign latency, reopt, RAG hits, utilization, statuses |
 | GET | `/optimization/strategy` | Public | Algorithm write-up for judges |
+| GET | `/kafka/status` | Public | Kafka enabled/ready/brokers/topics |
+| GET | `/kafka/topics` | Public | Topic catalog |
+| POST | `/kafka/publish` | API key | Demo bridge: publish envelope to any known topic |
 
 ### Regions
 

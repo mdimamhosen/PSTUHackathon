@@ -11,12 +11,16 @@ import { RagModule } from './modules/rag/rag.module';
 import { AgentsModule } from './modules/agents/agents.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { KafkaCoreModule } from './modules/kafka/kafka-core.module';
+import { KafkaIngressModule } from './modules/kafka/kafka-ingress.module';
+import { RegionsModule } from './modules/regions/regions.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     PrismaModule,
     QueuesModule,
+    KafkaCoreModule,
     MapsModule,
     MetricsModule,
     RealtimeModule,
@@ -24,7 +28,10 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     NotificationsModule,
     RagModule,
     AgentsModule,
+    RegionsModule,
     WorkersModule,
+    // Real-time region gateway ingest via Kafka
+    KafkaIngressModule,
   ],
 })
 export class WorkerModule {}

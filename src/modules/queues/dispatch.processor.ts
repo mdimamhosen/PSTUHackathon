@@ -9,6 +9,8 @@ import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { QUEUE_AGENT, QUEUE_DISPATCH, QUEUE_NOTIFY } from './queue.constants';
+import { KafkaService } from '../kafka/kafka.service';
+import { KafkaTopics } from '../kafka/kafka.topics';
 
 @Processor(QUEUE_DISPATCH, { concurrency: 8 })
 export class DispatchProcessor extends WorkerHost {
@@ -18,6 +20,7 @@ export class DispatchProcessor extends WorkerHost {
     private readonly matcher: ResourceMatcher,
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeGateway,
+    private readonly kafka: KafkaService,
     @InjectQueue(QUEUE_AGENT) private readonly agentQueue: Queue,
     @InjectQueue(QUEUE_NOTIFY) private readonly notifyQueue: Queue,
   ) {
@@ -38,6 +41,22 @@ export class DispatchProcessor extends WorkerHost {
         assignments: result.assignments,
         latencyMs: result.latencyMs,
       });
+      void this.kafka.publish(
+        KafkaTopics.DISPATCHES_ASSIGNED,
+        {
+          incidentId,
+          regionId: incident.regionId,
+          assignmentIds: result.assignments,
+          latencyMs: result.latencyMs,
+          severity: incident.severity,
+          algorithm: result.algorithm,
+        },
+        {
+          key: incidentId,
+          regionId: incident.regionId,
+          eventType: 'dispatch.assigned',
+        },
+      );
       await this.agentQueue.add(
         'agent',
         { incidentId },

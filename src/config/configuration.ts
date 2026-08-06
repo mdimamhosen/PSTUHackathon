@@ -25,6 +25,15 @@ const configuration = () => ({
   embeddingModel: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
   maxQueueDepth: parseInt(process.env.MAX_QUEUE_DEPTH || '5000', 10),
   workerMode: process.env.WORKER_MODE === 'true',
+  kafka: {
+    enabled:
+      process.env.KAFKA_ENABLED === 'true' ||
+      !!(process.env.KAFKA_BROKERS && process.env.KAFKA_BROKERS.trim()),
+    brokers: process.env.KAFKA_BROKERS || '',
+    clientId: process.env.KAFKA_CLIENT_ID || 'emergency-platform',
+    partitions: parseInt(process.env.KAFKA_PARTITIONS || '6', 10),
+    replicationFactor: parseInt(process.env.KAFKA_REPLICATION_FACTOR || '1', 10),
+  },
 });
 
 export type AppConfig = ReturnType<typeof configuration>;

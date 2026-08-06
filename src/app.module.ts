@@ -18,6 +18,7 @@ import { AgentsModule } from './modules/agents/agents.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { SimulationModule } from './modules/simulation/simulation.module';
+import { KafkaCoreModule } from './modules/kafka/kafka-core.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { SimulationModule } from './modules/simulation/simulation.module';
     PrismaModule,
     SecurityModule,
     QueuesModule,
+    KafkaCoreModule,
     MapsModule,
     MetricsModule,
     RealtimeModule,

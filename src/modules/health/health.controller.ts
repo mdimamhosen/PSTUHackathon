@@ -1,6 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Public } from '../../common/decorators/public.decorator';
@@ -11,6 +11,7 @@ import {
   QUEUE_NOTIFY,
 } from '../queues/queue.constants';
 import { MapsService } from '../maps/maps.service';
+import { KafkaService } from '../kafka/kafka.service';
 
 @ApiTags('health')
 @Controller('health')
@@ -19,6 +20,7 @@ export class HealthController {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly maps: MapsService,
+    private readonly kafka: KafkaService,
     @InjectQueue(QUEUE_DISPATCH) private readonly dispatchQueue: Queue,
     @InjectQueue(QUEUE_REOPT) private readonly reoptQueue: Queue,
     @InjectQueue(QUEUE_NOTIFY) private readonly notifyQueue: Queue,
@@ -26,6 +28,13 @@ export class HealthController {
 
   @Public()
   @Get()
+  @ApiOperation({
+    summary: 'Platform health (DB, Redis, Kafka, queues, integrations)',
+  })
+  @ApiOkResponse({
+    description:
+      'Core deps (db/redis) drive status. Kafka is first-class; if enabled but not ready, status becomes degraded (fail-soft for ingest still applies).',
+  })
   async check() {
     let dbOk = false;
     let redisOk = false;
@@ -52,13 +61,34 @@ export class HealthController {
       notify: await this.notifyQueue.count(),
     };
 
-    const status = dbOk && redisOk ? 'ok' : 'degraded';
+    const kafkaStatus = this.kafka.status();
+    const kafkaOk = !kafkaStatus.enabled || kafkaStatus.ready;
+    const status = dbOk && redisOk && kafkaOk ? 'ok' : 'degraded';
+
+    const kafka = {
+      enabled: kafkaStatus.enabled,
+      ready: kafkaStatus.ready,
+      ok: kafkaOk,
+      brokers: kafkaStatus.brokers,
+      clientId: kafkaStatus.clientId,
+      topics: kafkaStatus.topics,
+    };
+
     return {
       status,
       db: dbOk,
       redis: redisOk,
+      kafka,
       queueDepths: depths,
       integrations: {
+        kafka: {
+          configured: kafka.enabled,
+          ready: kafka.ready,
+          ok: kafka.ok,
+          brokers: kafka.brokers,
+          clientId: kafka.clientId,
+          topicCount: kafka.topics.length,
+        },
         googleMaps: {
           configured: !!this.config.get('googleMapsApiKey'),
           circuit: this.maps.circuitStatus(),

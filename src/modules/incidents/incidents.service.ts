@@ -14,6 +14,8 @@ import { MetricsService } from '../metrics/metrics.service';
 import { scorePriority } from '../optimization/priority.scorer';
 import { QUEUE_DISPATCH, QUEUE_REOPT } from '../queues/queue.constants';
 import { CreateIncidentDto, UpdateIncidentDto } from './dto/incident.dto';
+import { KafkaService } from '../kafka/kafka.service';
+import { KafkaTopics } from '../kafka/kafka.topics';
 
 @Injectable()
 export class IncidentsService {
@@ -22,6 +24,7 @@ export class IncidentsService {
     private readonly regions: RegionsService,
     private readonly metrics: MetricsService,
     private readonly config: ConfigService,
+    private readonly kafka: KafkaService,
     @InjectQueue(QUEUE_DISPATCH) private readonly dispatchQueue: Queue,
     @InjectQueue(QUEUE_REOPT) private readonly reoptQueue: Queue,
   ) {}
@@ -91,6 +94,30 @@ export class IncidentsService {
         },
       );
       await this.metrics.incr('ingest.total');
+      // Fan-out to Kafka AFTER durable write + BullMQ enqueue (fail-soft)
+      void this.kafka.publish(
+        KafkaTopics.INCIDENTS_CREATED,
+        {
+          id: incident.id,
+          regionId: incident.regionId,
+          title: incident.title,
+          lat: incident.lat,
+          lng: incident.lng,
+          severity: incident.severity,
+          affectedCount: incident.affectedCount,
+          disasterType: incident.disasterType,
+          priorityScore: incident.priorityScore,
+          status: incident.status,
+        },
+        {
+          key: incident.id,
+          regionId: incident.regionId,
+          idempotencyKey: incident.idempotencyKey || undefined,
+          eventType: 'incident.created',
+          source: 'incidents-service',
+        },
+      );
+      await this.metrics.incr('kafka.publish.incidents');
       return incident;
     } catch (err) {
       if (
@@ -172,6 +199,21 @@ export class IncidentsService {
         },
       );
     }
+    void this.kafka.publish(
+      KafkaTopics.INCIDENTS_UPDATED,
+      {
+        id: updated.id,
+        regionId: updated.regionId,
+        severity: updated.severity,
+        status: updated.status,
+        priorityScore: updated.priorityScore,
+      },
+      {
+        key: updated.id,
+        regionId: updated.regionId,
+        eventType: 'incident.updated',
+      },
+    );
     return updated;
   }
 }
