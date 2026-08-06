@@ -6,8 +6,6 @@ coverage/
 .DS_Store
 
 # secrets
-.env
-.env.local
 .env.*.local
 
 # generated
@@ -16,7 +14,6 @@ coverage/
 
 # IDE / editor
 .idea/
-.vscode/
 *.swp
 
 # Extra docs (single source of truth is README.md)
@@ -35,3 +32,4 @@ skills-lock.json
 Thumbs.db
 .turbo/
 .tmp/
+config.bat

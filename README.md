@@ -185,7 +185,7 @@ Socket.IO namespace `/realtime` lets dashboards join rooms `region:{id}`, `incid
 
 ### Multi-channel alerts (fail-soft)
 Critical severity and major reopt releases fan out through:
-- **Telegram** (free mobile push — primary demo channel)  
+- **Telegram** (optional free mobile push — add later for demo)  
 - **Email** via Nodemailer when SMTP is configured  
 - **SMS** via Twilio when trial credentials exist  
 
@@ -412,13 +412,12 @@ Copy from `.env.example`.
 | `GOOGLE_MAPS_API_KEY` | Live road ETAs (enable Distance Matrix + Directions) |
 | `ANTHROPIC_API_KEY` | Claude agents |
 | `OPENAI_API_KEY` | RAG embeddings + LLM fallback |
-| `TELEGRAM_BOT_TOKEN` | Free mobile alerts (`@BotFather`) |
-| `TELEGRAM_EOC_CHAT_ID` | Destination chat/group id |
 
-### Optional
+### Optional (alerts — skip for now if you want)
 
 | Variable | Purpose |
 |----------|---------|
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_EOC_CHAT_ID` | Free mobile push via Telegram (optional) |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Email |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` | SMS |
 | `AGENT_TIMEOUT_MS` | Default `15000` |

@@ -6,14 +6,14 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
+    "build": "node init && nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "nest start",
-    "start:dev": "nest start --watch",
-    "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main.js",
-    "start:worker": "ts-node -r tsconfig-paths/register src/worker.ts",
-    "start:worker:prod": "node dist/worker.js",
+    "start": "node init && nest start",
+    "start:dev": "node init && nest start --watch",
+    "start:debug": "node init && nest start --debug --watch",
+    "start:prod": "node init && node dist/main.js",
+    "start:worker": "node init && ts-node -r tsconfig-paths/register src/worker.ts",
+    "start:worker:prod": "node init && node dist/worker.js",
     "seed": "ts-node --transpile-only scripts/seed.ts",
     "load-smoke": "ts-node --transpile-only scripts/load-smoke.ts",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
@@ -103,5 +103,9 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
+  },
+  "optionalDependencies": {
+    "@emnapi/core": "1.11.3",
+    "@emnapi/runtime": "1.11.3"
   }
 }

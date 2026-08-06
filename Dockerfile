@@ -3,7 +3,8 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# npm install (not ci): Windows-generated locks often omit Linux optional native deps
+RUN npm install
 
 FROM node:22-alpine AS build
 WORKDIR /app
